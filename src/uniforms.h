@@ -44,6 +44,20 @@ typedef std::map<std::string, UniformFunction> UniformFunctionsList;
 typedef std::map<std::string, ada::Texture*> TextureList;
 typedef std::map<std::string, ada::TextureStream*> StreamsList;
 
+struct CameraData {
+    glm::vec3   position;
+    glm::vec3   right;
+    glm::vec3   up;
+    glm::vec3   forward;
+    float       minDepth;
+    float       maxDepth;
+    float       fovHorz;
+    float       fovVert;
+
+    float       tanHFov2;
+    float       tanVFov2;
+};
+
 class Uniforms {
 public:
     Uniforms();
@@ -57,7 +71,8 @@ public:
     bool                    addBumpTexture( const std::string& _name, const std::string& _path, WatchFileList& _files, bool _flip = true, bool _verbose = true );
     bool                    addStreamingTexture( const std::string& _name, const std::string& _url, bool _flip = true, bool _device = false, bool _verbose = true );
     bool                    addAudioTexture( const std::string& _name, const std::string& device_id, bool _flip = false, bool _verbose = true );
-    void                    updateStreammingTextures();
+    bool                    addCameraTrack( const std::string& _name );
+    void                    update(unsigned int _frame);
 
     void                    set( const std::string& _name, float _value);
     void                    set( const std::string& _name, float _x, float _y);
@@ -104,8 +119,9 @@ public:
     std::vector<ada::ConvolutionPyramid> convolution_pyramids;
 
     // 3d Scene Uniforms 
-    std::vector<ada::Camera>    cameras;
     std::vector<ada::Light>     lights;
+    std::vector<ada::Camera>    cameras;
+    std::vector<CameraData>     cameraTrack;
 
 protected:
     bool                    m_change;

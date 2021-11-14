@@ -531,6 +531,9 @@ int main(int argc, char **argv) {
             else
                 std::cout << "Argument '" << argument << "' should be followed by a <texture>. Skipping argument." << std::endl;
         }
+        else if ( ada::haveExt(argument,"csv") ) {
+            sandbox.uniforms.addCameraTrack(argument);
+        }
     }
 
     if (sandbox.verbose) {

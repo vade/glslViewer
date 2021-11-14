@@ -1,5 +1,6 @@
 #include "uniforms.h"
 
+#include <fstream>
 #include <regex>
 #include <sstream>
 #include <sys/stat.h>
@@ -432,12 +433,63 @@ bool Uniforms::addAudioTexture(const std::string& _name, const std::string& devi
         return false;
 }
 
-void Uniforms::updateStreammingTextures() {
+bool Uniforms::addCameraTrack( const std::string& _name ) {
+    std::fstream is( _name.c_str(), std::ios::in);
+    if (is.is_open()) {
+        float minDepth = 9999999.f;
+        float maxDepth = 0.f;
+        glm::vec3 position;
+        cameraTrack.clear();
+
+        std::string line;
+        std::getline(is,line);
+        while (std::getline(is,line)) {
+            std::vector<std::string> data = ada::split(line, ',', true);
+            CameraData frame;
+            frame.minDepth = ada::toFloat(data[1]);
+            if (frame.minDepth < minDepth)
+                minDepth = frame.minDepth;
+            frame.maxDepth = ada::toFloat(data[2]);
+            if (frame.maxDepth > maxDepth)
+                maxDepth = frame.maxDepth;
+            
+            frame.fovHorz = (ada::toFloat(data[3]) * M_PI) / 180.f;
+            frame.fovVert = (ada::toFloat(data[4]) * M_PI) / 180.f;
+            
+            frame.tanHFov2 = tan(frame.fovHorz / 2.f);
+            frame.tanVFov2 = tan(frame.fovVert / 2.f);
+
+            frame.position = glm::vec3(ada::toFloat(data[5]), ada::toFloat(data[6]), ada::toFloat(data[7]));
+            position += frame.position;
+            frame.right = glm::vec3(ada::toFloat(data[8]), ada::toFloat(data[9]), ada::toFloat(data[10]));
+            frame.up = glm::vec3(ada::toFloat(data[11]), ada::toFloat(data[12]), ada::toFloat(data[13]));
+            frame.forward = glm::vec3(ada::toFloat(data[14]), ada::toFloat(data[15]), ada::toFloat(data[16]));
+
+            cameraTrack.push_back(frame);
+        }
+
+        position = position / float(cameraTrack.size());
+        return true;
+    }
+ 
+    return false;
+}
+
+void Uniforms::update(unsigned int _frame) {
     for (StreamsList::iterator i = streams.begin(); i != streams.end(); ++i) {
         if(i->second->update()) {
             m_change = true;
         }
     }
+
+    if (cameraTrack.size() != 0) {
+        size_t index = _frame % cameraTrack.size();
+        cameras[0].setPosition( cameraTrack[index].position );
+
+        glm::mat4 m = glm::lookAt( -cameraTrack[index].position , cameraTrack[index].position + cameraTrack[index].forward , cameraTrack[index].up );
+        cameras[0].setOrientation(glm::toQuat(m));
+        
+    } 
 }
 
 void Uniforms::set( const std::string& _name, float _value) {

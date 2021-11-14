@@ -996,7 +996,7 @@ void Sandbox::render() {
     // UPDATE STREAMING TEXTURES
     // -----------------------------------------------
     if (m_initialized)
-        uniforms.updateStreammingTextures();
+        uniforms.update(m_frame);
 
     // RENDER SHADOW MAP
     // -----------------------------------------------
