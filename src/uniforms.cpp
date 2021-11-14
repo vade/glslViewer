@@ -445,6 +445,10 @@ bool Uniforms::addCameraTrack( const std::string& _name ) {
         std::getline(is,line);
         while (std::getline(is,line)) {
             std::vector<std::string> data = ada::split(line, ',', true);
+
+            if (data[0] == "# frame")
+                continue;
+
             CameraData frame;
             frame.minDepth = ada::toFloat(data[1]);
             if (frame.minDepth < minDepth)
@@ -468,6 +472,8 @@ bool Uniforms::addCameraTrack( const std::string& _name ) {
             cameraTrack.push_back(frame);
         }
 
+        std::cout << cameraTrack.size() << " frames loaded" << std::endl;
+
         position = position / float(cameraTrack.size());
         return true;
     }
@@ -484,7 +490,7 @@ void Uniforms::update(unsigned int _frame) {
 
     if (cameraTrack.size() != 0) {
         size_t index = _frame % cameraTrack.size();
-        cameras[0].setPosition( cameraTrack[index].position );
+        cameras[0].setPosition( -cameraTrack[index].position );
 
         glm::mat4 m = glm::lookAt( -cameraTrack[index].position , cameraTrack[index].position + cameraTrack[index].forward , cameraTrack[index].up );
         cameras[0].setOrientation(glm::toQuat(m));
