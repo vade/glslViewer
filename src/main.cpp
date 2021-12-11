@@ -6,13 +6,13 @@
 
 #include <sys/stat.h>
 
+
 #ifndef PLATFORM_WINDOWS
 #include <unistd.h>
 #endif
 
 #include <map>
 #include <thread>
-#include <mutex>
 #include <atomic>
 #include <iostream>
 #include <fstream>
@@ -27,7 +27,7 @@
 #include "sandbox.h"
 #include "types/files.h"
 
-std::string                 version = "2.0.0";
+std::string                 version = "2.0.2";
 std::string                 name    = "GlslViewer";
 std::string                 header  = name + " " + version + " by Patricio Gonzalez Vivo ( patriciogonzalezvivo.com )"; 
 
@@ -35,13 +35,9 @@ std::string                 header  = name + " " + version + " by Patricio Gonza
 Sandbox                     sandbox;
 
 //  List of FILES to watch and the variable to communicate that between process
-WatchFileList               files;
-std::mutex                  filesMutex;
 int                         fileChanged;
 
 // Commands variables
-CommandList                 commands;
-std::mutex                  commandsMutex;
 std::vector<std::string>    commandsArgs;    // Execute commands
 bool                        commandsExit = false;
 
@@ -50,8 +46,6 @@ bool                        screensaver = false;
 bool                        bTerminate = false;
 bool                        fullFps = false;
 
-void                        commandsRun(const std::string &_cmd);
-void                        commandsRun(const std::string &_cmd, std::mutex &_mutex);
 void                        commandsInit();
 
 #if !defined(__EMSCRIPTEN__)
@@ -70,12 +64,12 @@ void command(char* c) {
 
 void setFrag(char* c) {
     sandbox.setSource(FRAGMENT, std::string(c) );
-    sandbox.reloadShaders(files);
+    sandbox.reloadShaders();
 }
 
 void setVert(char* c) {
     sandbox.setSource(VERTEX, std::string(c) );
-    sandbox.reloadShaders(files);
+    sandbox.reloadShaders();
 }
 
 char* getFrag() {
@@ -87,7 +81,6 @@ char* getVert() {
 }
 
 }
-
 
 #endif
 
@@ -295,15 +288,12 @@ int main(int argc, char **argv) {
     commandsInit();
 
     // Initialize openGL context
-    ada::initGL (window_viewport, window_properties);
+    ada::initGL(window_viewport, window_properties);
     #ifndef __EMSCRIPTEN__
     ada::setWindowTitle("GlslViewer");
     #endif
 
-    struct stat st;                         // for files to watch
-    int         textureCounter  = 0;        // Number of textures to load
-    bool        vFlip           = true;     // Flip state
-
+    struct stat st;
     //Load the the resources (textures)
     for (int i = 1; i < argc ; i++){
         std::string argument = std::string(argv[i]);
@@ -356,103 +346,16 @@ int main(int argc, char **argv) {
         else if (argument == "--fullFps" ) {
             fullFps = true;
         }
-        else if ( sandbox.frag_index == -1 && (ada::haveExt(argument,"frag") || ada::haveExt(argument,"fs") ) ) {
-            if ( stat(argument.c_str(), &st) != 0 ) {
-                std::cout << "File " << argv[i] << " not founded. Creating a default fragment shader with that name"<< std::endl;
-
-                std::ofstream out(argv[i]);
-                if (willLoadGeometry)
-                    out << ada::getDefaultSrc(ada::FRAG_DEFAULT_SCENE);
-                else if (willLoadTextures)
-                    out << ada::getDefaultSrc(ada::FRAG_DEFAULT_TEXTURE);
-                else 
-                    out << ada::getDefaultSrc(ada::FRAG_DEFAULT);
-                out.close();
-            }
-
-            WatchFile file;
-            file.type = FRAG_SHADER;
-            file.path = argument;
-            file.lastChange = st.st_mtime;
-            files.push_back(file);
-
-            sandbox.frag_index = files.size()-1;
-
-        }
-        else if ( sandbox.vert_index == -1 && ( ada::haveExt(argument,"vert") || ada::haveExt(argument,"vs") ) ) {
-            if ( stat(argument.c_str(), &st) != 0 ) {
-                std::cout << "File " << argv[i] << " not founded. Creating a default vertex shader with that name"<< std::endl;
-
-                std::ofstream out(argv[i]);
-                out << ada::getDefaultSrc(ada::VERT_DEFAULT_SCENE);
-                out.close();
-            }
-
-            WatchFile file;
-            file.type = VERT_SHADER;
-            file.path = argument;
-            file.lastChange = st.st_mtime;
-            files.push_back(file);
-
-            sandbox.vert_index = files.size()-1;
-        }
-        else if ( sandbox.geom_index == -1 && ( ada::haveExt(argument,"ply") || ada::haveExt(argument,"PLY") ||
-                                                ada::haveExt(argument,"obj") || ada::haveExt(argument,"OBJ") ||
-                                                ada::haveExt(argument,"stl") || ada::haveExt(argument,"STL") ||
-                                                ada::haveExt(argument,"glb") || ada::haveExt(argument,"GLB") ||
-                                                ada::haveExt(argument,"gltf") || ada::haveExt(argument,"GLTF") ) ) {
-            if ( stat(argument.c_str(), &st) != 0) {
-                std::cerr << "Error watching file " << argument << std::endl;
-            }
-            else {
-                WatchFile file;
-                file.type = GEOMETRY;
-                file.path = argument;
-                file.lastChange = st.st_mtime;
-                files.push_back(file); 
-                sandbox.geom_index = files.size()-1;
-            }
-        }
         else if (   argument == "-vFlip" ||
                     argument == "--vFlip" ) {
-            vFlip = false;
+            sandbox.vFlip = false;
         }
-        else if (   ada::haveExt(argument,"hdr") || ada::haveExt(argument,"HDR") ||
-                    ada::haveExt(argument,"png") || ada::haveExt(argument,"PNG") ||
-                    ada::haveExt(argument,"tga") || ada::haveExt(argument,"TGA") ||
-                    ada::haveExt(argument,"psd") || ada::haveExt(argument,"PSD") ||
-                    ada::haveExt(argument,"gif") || ada::haveExt(argument,"GIF") ||
-                    ada::haveExt(argument,"bmp") || ada::haveExt(argument,"BMP") ||
-                    ada::haveExt(argument,"jpg") || ada::haveExt(argument,"JPG") ||
-                    ada::haveExt(argument,"jpeg") || ada::haveExt(argument,"JPEG")) {
-
-            if (ada::check_for_pattern(argument)) {
-                if ( sandbox.uniforms.addStreamingTexture("u_tex" + ada::toString(textureCounter), argument, vFlip, false) )
-                    textureCounter++;
-            }
-            else if ( sandbox.uniforms.addTexture("u_tex" + ada::toString(textureCounter), argument, files, vFlip) )
-                textureCounter++;
-        } 
         else if ( argument == "--video" ) {
             if (++i < argc) {
                 argument = std::string(argv[i]);
-                if ( sandbox.uniforms.addStreamingTexture("u_tex" + ada::toString(textureCounter), argument, vFlip, true) )
-                    textureCounter++;
+                if ( sandbox.uniforms.addStreamingTexture("u_tex" + ada::toString(sandbox.textureCounter), argument,  sandbox.vFlip, true) )
+                    sandbox.textureCounter++;
             }
-        }
-        else if (   ada::haveExt(argument,"mov") || ada::haveExt(argument,"MOV") ||
-                    ada::haveExt(argument,"mp4") || ada::haveExt(argument,"MP4") ||
-                    ada::haveExt(argument,"mkv") || ada::haveExt(argument,"MKV") ||
-                    ada::haveExt(argument,"mpg") || ada::haveExt(argument,"MPG") ||
-                    ada::haveExt(argument,"mpeg") || ada::haveExt(argument,"MPEG") ||
-                    ada::haveExt(argument,"h264") ||
-                    argument.rfind("/dev/", 0) == 0 ||
-                    argument.rfind("http://", 0) == 0 ||
-                    argument.rfind("https://", 0) == 0 ||
-                    argument.rfind("rtsp://", 0) == 0 ||
-                    argument.rfind("rtmp://", 0) == 0) {
-            if ( sandbox.uniforms.addStreamingTexture("u_tex" + ada::toString(textureCounter), argument, vFlip, false) )
-                textureCounter++;
         }
         else if ( argument == "--audio" || argument == "-a" ) {
             std::string device_id = "-1"; //default device id
@@ -464,8 +367,8 @@ int main(int argc, char **argv) {
                     i++;
                 }
             }
-            if ( sandbox.uniforms.addAudioTexture("u_tex" + ada::toString(textureCounter), device_id, vFlip, true) )
-                textureCounter++;
+            if (sandbox.uniforms.addAudioTexture("u_tex" + ada::toString(sandbox.textureCounter), device_id,  sandbox.vFlip, true) )
+                sandbox.textureCounter++;
         }
         else if ( argument == "--holoplay" ) {
             if (++i < argc) {
@@ -475,7 +378,7 @@ int main(int argc, char **argv) {
         else if ( argument == "-c" || argument == "-sh" ) {
             if(++i < argc) {
                 argument = std::string(argv[i]);
-                sandbox.uniforms.setCubeMap(argument, files);
+                sandbox.uniforms.setCubeMap(argument, sandbox.files);
                 sandbox.getScene().showCubebox = false;
             }
             else
@@ -485,7 +388,7 @@ int main(int argc, char **argv) {
             if(++i < argc)
             {
                 argument = std::string(argv[i]);
-                sandbox.uniforms.setCubeMap(argument, files);
+                sandbox.uniforms.setCubeMap(argument, sandbox.files);
                 sandbox.getScene().showCubebox = true;
             }
             else
@@ -522,15 +425,43 @@ int main(int argc, char **argv) {
                     argument.rfind("rtsp://", 0) == 0 ||
                     argument.rfind("rtmp://", 0) == 0 ||
                     ada::check_for_pattern(argument) ) {
-                    sandbox.uniforms.addStreamingTexture(parameterPair, argument, vFlip, false);
+                    sandbox.uniforms.addStreamingTexture(parameterPair, argument, sandbox.vFlip, false);
                 }
                 // Else load it as a single texture
                 else 
-                    sandbox.uniforms.addTexture(parameterPair, argument, files, vFlip);
+                    sandbox.uniforms.addTexture(parameterPair, argument, sandbox.files, sandbox.vFlip);
             }
             else
                 std::cout << "Argument '" << argument << "' should be followed by a <texture>. Skipping argument." << std::endl;
         }
+        else {
+
+            if ( sandbox.frag_index == -1 && (ada::haveExt(argument,"frag") || ada::haveExt(argument,"fs") ) ) {
+                if ( stat(argument.c_str(), &st) != 0 ) {
+                    std::cout << "File " << argument << " not founded. Creating a default fragment shader with that name"<< std::endl;
+
+                    std::ofstream out(argument);
+                    if (willLoadGeometry)
+                        out << ada::getDefaultSrc(ada::FRAG_DEFAULT_SCENE);
+                    else if (willLoadTextures)
+                        out << ada::getDefaultSrc(ada::FRAG_DEFAULT_TEXTURE);
+                    else 
+                        out << ada::getDefaultSrc(ada::FRAG_DEFAULT);
+                    out.close();
+                }
+            }
+            else if ( sandbox.vert_index == -1 && ( ada::haveExt(argument,"vert") || ada::haveExt(argument,"vs") ) ) {
+                if ( stat(argument.c_str(), &st) != 0 ) {
+                    std::cout << "File " << argument << " not founded. Creating a default vertex shader with that name"<< std::endl;
+
+                    std::ofstream out(argument);
+                    out << ada::getDefaultSrc(ada::VERT_DEFAULT_SCENE);
+                    out.close();
+                }
+            }
+
+            sandbox.loadFile(argument);
+        } 
     }
 
     if (sandbox.verbose) {
@@ -557,7 +488,7 @@ int main(int argc, char **argv) {
     }
     #endif
 
-    sandbox.setup(files, commands);
+    sandbox.init();
 
 #ifdef __EMSCRIPTEN__
     emscripten_request_animation_frame_loop(loop, 0);
@@ -600,7 +531,7 @@ int main(int argc, char **argv) {
         if (sandbox.verbose)
             std::cout << line << std::endl;
             
-        commandsRun(line, oscMutex);
+        sandbox.commandsRun(line, oscMutex);
     });
 
     if (oscPort > 0) {
@@ -612,10 +543,8 @@ int main(int argc, char **argv) {
     while ( ada::isGL() && keepRunnig.load() ){
         // Something change??
         if ( fileChanged != -1 ) {
-            filesMutex.lock();
-            sandbox.onFileChange( files, fileChanged );
+            sandbox.onFileChange( fileChanged );
             fileChanged = -1;
-            filesMutex.unlock();
         }
 
         loop();
@@ -671,174 +600,9 @@ void ada::onScroll(float _yoffset) { sandbox.onScroll(_yoffset); }
 void ada::onMouseDrag(float _x, float _y, int _button) { sandbox.onMouseDrag(_x, _y, _button); }
 void ada::onViewportResize(int _newWidth, int _newHeight) { sandbox.onViewportResize(_newWidth, _newHeight); }
 
-void commandsRun(const std::string &_cmd) { commandsRun(_cmd, commandsMutex); }
-void commandsRun(const std::string &_cmd, std::mutex &_mutex) {
-    bool resolve = false;
-
-    // Check if _cmd is present in the list of commands
-    for (size_t i = 0; i < commands.size(); i++) {
-        if (ada::beginsWith(_cmd, commands[i].begins_with)) {
-            // Do require mutex the thread?
-            if (commands[i].mutex) _mutex.lock();
-
-            // Execute de command
-            resolve = commands[i].exec(_cmd);
-
-            if (commands[i].mutex) _mutex.unlock();
-
-            // If got resolved stop searching
-            if (resolve) break;
-        }
-    }
-
-    // If nothing match maybe the user is trying to define the content of a uniform
-    if (!resolve) {
-        _mutex.lock();
-        sandbox.uniforms.parseLine(_cmd);
-        _mutex.unlock();
-    }
-}
-
 void commandsInit() {
-    commands.push_back(Command("help", [&](const std::string& _line){
-        if (_line == "help") {
-            std::cout << "// " << header << std::endl;
-            std::cout << "// " << std::endl;
-            for (size_t i = 0; i < commands.size(); i++) {
-                std::cout << "// " << commands[i].description << std::endl;
-            }
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2) {
-                for (size_t i = 0; i < commands.size(); i++) {
-                    if (commands[i].begins_with == values[1]) {
-                        std::cout << "// " << commands[i].description << std::endl;
-                    }
-                }
-            }
-        }
-        return false;
-    },
-    "help[,<command>]               print help for one or all command", false));
 
-    commands.push_back(Command("version", [&](const std::string& _line){ 
-        if (_line == "version") {
-            std::cout << version << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "version                        return glslViewer version.", false));
-
-    commands.push_back(Command("window_width", [&](const std::string& _line){ 
-        if (_line == "window_width") {
-            std::cout << ada::getWindowWidth() << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "window_width                   return the width of the windows.", false));
-
-    commands.push_back(Command("window_height", [&](const std::string& _line){ 
-        if (_line == "window_height") {
-            std::cout << ada::getWindowHeight() << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "window_height                  return the height of the windows.", false));
-
-    commands.push_back(Command("pixel_density", [&](const std::string& _line){ 
-        if (_line == "pixel_density") {
-            std::cout << ada::getPixelDensity() << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "pixel_density                  return the pixel density.", false));
-
-    commands.push_back(Command("screen_size", [&](const std::string& _line){ 
-        if (_line == "screen_size") {
-            glm::ivec2 screen_size = ada::getScreenSize();
-            std::cout << screen_size.x << ',' << screen_size.y << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "screen_size                    return the screen size.", false));
-
-    commands.push_back(Command("viewport", [&](const std::string& _line){ 
-        if (_line == "viewport") {
-            glm::ivec4 viewport = ada::getViewport();
-            std::cout << viewport.x << ',' << viewport.y << ',' << viewport.z << ',' << viewport.w << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "viewport                       return the viewport size.", false));
-
-    commands.push_back(Command("mouse", [&](const std::string& _line){ 
-        if (_line == "mouse") {
-            glm::vec2 pos = ada::getMousePosition();
-            std::cout << pos.x << "," << pos.y << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "mouse                          return the mouse position.", false));
-    
-    commands.push_back(Command("fps", [&](const std::string& _line){
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() == 2) {
-            commandsMutex.lock();
-            ada::setFps( ada::toInt(values[1]) );
-            commandsMutex.unlock();
-            return true;
-        }
-        else {
-            // Force the output in floats
-            printf("%f\n", ada::getFps());
-            return true;
-        }
-        return false;
-    },
-    "fps                            return or set the amount of frames per second.", false));
-
-    commands.push_back(Command("delta", [&](const std::string& _line){ 
-        if (_line == "delta") {
-            // Force the output in floats
-            printf("%f\n", ada::getDelta());
-            return true;
-        }
-        return false;
-    },
-    "delta                          return u_delta, the secs between frames.", false));
-
-    commands.push_back(Command("date", [&](const std::string& _line){ 
-        if (_line == "date") {
-            // Force the output in floats
-            glm::vec4 date = ada::getDate();
-            std::cout << date.x << ',' << date.y << ',' << date.z << ',' << date.w << std::endl;
-            return true;
-        }
-        return false;
-    },
-    "date                           return u_date as YYYY, M, D and Secs.", false));
-
-    commands.push_back(Command("files", [&](const std::string& _line){ 
-        if (_line == "files") {
-            for (size_t i = 0; i < files.size(); i++) { 
-                std::cout << std::setw(2) << i << "," << std::setw(12) << ada::toString(files[i].type) << "," << files[i].path << std::endl;
-            }
-            return true;
-        }
-        return false;
-    },
-    "files                          return a list of files.", false));
-
-    commands.push_back( Command("define,", [&](const std::string& _line){ 
+    sandbox.commands.push_back( Command("define,", [&](const std::string& _line){ 
         std::vector<std::string> values = ada::split(_line,',');
         bool change = false;
         if (values.size() == 2) {
@@ -856,12 +620,12 @@ void commandsInit() {
 
         if (change) {
             fullFps = true;
-            for (size_t i = 0; i < files.size(); i++) {
-                if (files[i].type == FRAG_SHADER ||
-                    files[i].type == VERT_SHADER ) {
-                        filesMutex.lock();
+            for (size_t i = 0; i < sandbox.files.size(); i++) {
+                if (sandbox.files[i].type == FRAG_SHADER ||
+                    sandbox.files[i].type == VERT_SHADER ) {
+                        sandbox.filesMutex.lock();
                         fileChanged = i;
-                        filesMutex.unlock();
+                        sandbox.filesMutex.unlock();
                         std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
                 }
             }
@@ -871,17 +635,17 @@ void commandsInit() {
     },
     "define,<KEYWORD>               add a define to the shader", false));
 
-    commands.push_back( Command("undefine,", [&](const std::string& _line){ 
+    sandbox.commands.push_back( Command("undefine,", [&](const std::string& _line){ 
         std::vector<std::string> values = ada::split(_line,',');
         if (values.size() == 2) {
             sandbox.delDefine( values[1] );
             fullFps = true;
-            for (size_t i = 0; i < files.size(); i++) {
-                if (files[i].type == FRAG_SHADER ||
-                    files[i].type == VERT_SHADER ) {
-                        filesMutex.lock();
+            for (size_t i = 0; i < sandbox.files.size(); i++) {
+                if (sandbox.files[i].type == FRAG_SHADER ||
+                    sandbox.files[i].type == VERT_SHADER ) {
+                        sandbox.filesMutex.lock();
                         fileChanged = i;
-                        filesMutex.unlock();
+                        sandbox.filesMutex.unlock();
                         std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
                 }
             }
@@ -892,13 +656,13 @@ void commandsInit() {
     },
     "undefine,<KEYWORD>             remove a define on the shader", false));
 
-    commands.push_back(Command("reload", [&](const std::string& _line){ 
+    sandbox.commands.push_back(Command("reload", [&](const std::string& _line){ 
         if (_line == "reload" || _line == "reload,all") {
             fullFps = true;
-            for (size_t i = 0; i < files.size(); i++) {
-                filesMutex.lock();
+            for (size_t i = 0; i < sandbox.files.size(); i++) {
+                sandbox.filesMutex.lock();
                 fileChanged = i;
-                filesMutex.unlock();
+                sandbox.filesMutex.unlock();
                 std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
             }
             fullFps = false;
@@ -907,11 +671,11 @@ void commandsInit() {
         else {
             std::vector<std::string> values = ada::split(_line,',');
             if (values.size() == 2 && values[0] == "reload") {
-                for (size_t i = 0; i < files.size(); i++) {
-                    if (files[i].path == values[1]) {
-                        filesMutex.lock();
+                for (size_t i = 0; i < sandbox.files.size(); i++) {
+                    if (sandbox.files[i].path == values[1]) {
+                        sandbox.filesMutex.lock();
                         fileChanged = i;
-                        filesMutex.unlock();
+                        sandbox.filesMutex.unlock();
                         return true;
                     } 
                 }
@@ -921,130 +685,111 @@ void commandsInit() {
     },
     "reload[,<filename>]            reload one or all files", false));
 
-    commands.push_back(Command("frag", [&](const std::string& _line){ 
-        if (_line == "frag") {
-            std::cout << sandbox.getSource(FRAGMENT) << std::endl;
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2) {
-                if (ada::isDigit(values[1])) {
-                    // Line number
-                    size_t lineNumber = ada::toInt(values[1]) - 1;
-                    std::vector<std::string> lines = ada::split(sandbox.getSource(FRAGMENT),'\n', true);
-                    if (lineNumber < lines.size()) {
-                        std::cout << lineNumber + 1 << " " << lines[lineNumber] << std::endl; 
-                    }
-                    
-                }
-                else {
-                    // Write shader into a file
-                    std::ofstream out(values[1]);
-                    out << sandbox.getSource(FRAGMENT);
-                    out.close();
-                }
-                return true;
-            }
-            else if (values.size() > 2) {
-                std::vector<std::string> lines = ada::split(sandbox.getSource(FRAGMENT),'\n', true);
-                for (size_t i = 1; i < values.size(); i++) {
-                    size_t lineNumber = ada::toInt(values[i]) - 1;
-                    if (lineNumber < lines.size()) {
-                        std::cout << lineNumber + 1 << " " << lines[lineNumber] << std::endl; 
-                    }
-                }
-            }
-        }
-        return false;
-    },
-    "frag[,<filename>]              returns or save the fragment shader source code.", false));
-
-    commands.push_back(Command("vert", [&](const std::string& _line){ 
-        if (_line == "vert") {
-            std::cout << sandbox.getSource(VERTEX) << std::endl;
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2) {
-                if (ada::isDigit(values[1])) {
-                    // Line number
-                    size_t lineNumber = ada::toInt(values[1]) - 1;
-                    std::vector<std::string> lines = ada::split(sandbox.getSource(VERTEX),'\n', true);
-                    if (lineNumber < lines.size()) {
-                        std::cout << lineNumber + 1 << " " << lines[lineNumber] << std::endl; 
-                    }
-                    
-                }
-                else {
-                    // Write shader into a file
-                    std::ofstream out(values[1]);
-                    out << sandbox.getSource(VERTEX);
-                    out.close();
-                }
-                return true;
-            }
-            else if (values.size() > 2) {
-                std::vector<std::string> lines = ada::split(sandbox.getSource(VERTEX),'\n', true);
-                for (size_t i = 1; i < values.size(); i++) {
-                    size_t lineNumber = ada::toInt(values[i]) - 1;
-                    if (lineNumber < lines.size()) {
-                        std::cout << lineNumber + 1 << " " << lines[lineNumber] << std::endl; 
-                    }
-                }
-            }
-        }
-        return false;
-    },
-    "vert[,<filename>]              returns or save the vertex shader source code.", false));
-
-    commands.push_back( Command("dependencies", [&](const std::string& _line){ 
-        if (_line == "dependencies") {
-            for (size_t i = 0; i < files.size(); i++) { 
-                if (files[i].type == GLSL_DEPENDENCY) {
-                    std::cout << files[i].path << std::endl;
-                }   
-            }
-            return true;
-        }
-        else if (_line == "dependencies,frag") {
-            sandbox.printDependencies(FRAGMENT);
-            return true;
-        }
-        else if (_line == "dependencies,vert") {
-            sandbox.printDependencies(VERTEX);
+    sandbox.commands.push_back(Command("version", [&](const std::string& _line){ 
+        if (_line == "version") {
+            std::cout << version << std::endl;
             return true;
         }
         return false;
     },
-    "dependencies[,vert|frag]       returns all the dependencies of the vertex o fragment shader or both.", false));
+    "version                        return glslViewer version.", false));
 
-    commands.push_back(Command("update", [&](const std::string& _line){ 
-        if (_line == "update") {
-            sandbox.flagChange();
+    sandbox.commands.push_back(Command("window_width", [&](const std::string& _line){ 
+        if (_line == "window_width") {
+            std::cout << ada::getWindowWidth() << std::endl;
+            return true;
         }
         return false;
     },
-    "update                         force all uniforms to be updated", false));
+    "window_width                   return the width of the windows.", false));
 
-    commands.push_back(Command("wait", [&](const std::string& _line){ 
+    sandbox.commands.push_back(Command("window_height", [&](const std::string& _line){ 
+        if (_line == "window_height") {
+            std::cout << ada::getWindowHeight() << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "window_height                  return the height of the windows.", false));
+
+    sandbox.commands.push_back(Command("pixel_density", [&](const std::string& _line){ 
+        if (_line == "pixel_density") {
+            std::cout << ada::getPixelDensity() << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "pixel_density                  return the pixel density.", false));
+
+    sandbox.commands.push_back(Command("screen_size", [&](const std::string& _line){ 
+        if (_line == "screen_size") {
+            glm::ivec2 screen_size = ada::getScreenSize();
+            std::cout << screen_size.x << ',' << screen_size.y << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "screen_size                    return the screen size.", false));
+
+    sandbox.commands.push_back(Command("viewport", [&](const std::string& _line){ 
+        if (_line == "viewport") {
+            glm::ivec4 viewport = ada::getViewport();
+            std::cout << viewport.x << ',' << viewport.y << ',' << viewport.z << ',' << viewport.w << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "viewport                       return the viewport size.", false));
+
+    sandbox.commands.push_back(Command("mouse", [&](const std::string& _line){ 
+        if (_line == "mouse") {
+            glm::vec2 pos = ada::getMousePosition();
+            std::cout << pos.x << "," << pos.y << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "mouse                          return the mouse position.", false));
+    
+    sandbox.commands.push_back(Command("fps", [&](const std::string& _line){
         std::vector<std::string> values = ada::split(_line,',');
         if (values.size() == 2) {
-            if (values[0] == "wait_sec")
-                std::this_thread::sleep_for(std::chrono::seconds( ada::toInt(values[1])) );
-            else if (values[0] == "wait_ms")
-                std::this_thread::sleep_for(std::chrono::milliseconds( ada::toInt(values[1])) );
-            else if (values[0] == "wait_us")
-                std::this_thread::sleep_for(std::chrono::microseconds( ada::toInt(values[1])) );
-            else
-                std::this_thread::sleep_for(std::chrono::microseconds( (int)(ada::toFloat(values[1]) * 1000000) ));
+            // commandsMutex.lock();
+            ada::setFps( ada::toInt(values[1]) );
+            // commandsMutex.unlock();
+            return true;
+        }
+        else {
+            // Force the output in floats
+            printf("%f\n", ada::getFps());
+            return true;
         }
         return false;
     },
-    "wait,<seconds>                 wait for X <seconds> before excecuting another command.", false));
+    "fps                            return or set the amount of frames per second.", false));
 
-    commands.push_back(Command("fullFps", [&](const std::string& _line){
+    sandbox.commands.push_back(Command("delta", [&](const std::string& _line){ 
+        if (_line == "delta") {
+            // Force the output in floats
+            printf("%f\n", ada::getDelta());
+            return true;
+        }
+        return false;
+    },
+    "delta                          return u_delta, the secs between frames.", false));
+
+    sandbox.commands.push_back(Command("date", [&](const std::string& _line){ 
+        if (_line == "date") {
+            // Force the output in floats
+            glm::vec4 date = ada::getDate();
+            std::cout << date.x << ',' << date.y << ',' << date.z << ',' << date.w << std::endl;
+            return true;
+        }
+        return false;
+    },
+    "date                           return u_date as YYYY, M, D and Secs.", false));
+
+    sandbox.commands.push_back(Command("fullFps", [&](const std::string& _line){
         if (_line == "fullFps") {
             std::string rta = fullFps ? "on" : "off";
             std::cout <<  rta << std::endl; 
@@ -1053,193 +798,16 @@ void commandsInit() {
         else {
             std::vector<std::string> values = ada::split(_line,',');
             if (values.size() == 2) {
-                commandsMutex.lock();
+                // sandbox.commandsMutex.lock();
                 fullFps = (values[1] == "on");
-                commandsMutex.unlock();
+                // sandbox.commandsMutex.unlock();
             }
         }
         return false;
     },
     "fullFps[,on|off]               go to full FPS or not", false));
 
-    commands.push_back(Command("cursor", [&](const std::string& _line){
-        if (_line == "cursor") {
-            std::string rta = sandbox.cursor ? "on" : "off";
-            std::cout <<  rta << std::endl; 
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2) {
-                commandsMutex.lock();
-                sandbox.cursor = (values[1] == "on");
-                commandsMutex.unlock();
-            }
-        }
-        return false;
-    },
-    "cursor[,on|off]                show/hide cursor", false));
-
-    commands.push_back(Command("screenshot", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() == 2) {
-            commandsMutex.lock();
-            sandbox.screenshotFile = values[1];
-            commandsMutex.unlock();
-            return true;
-        }
-        return false;
-    },
-    "screenshot[,<filename>]        saves a screenshot to a filename.", false));
-
-    commands.push_back(Command("sequence", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() >= 3) {
-            float from = ada::toFloat(values[1]);
-            float to = ada::toFloat(values[2]);
-            float fps = 24.0;
-
-            if (values.size() == 4)
-                fps = ada::toFloat(values[3]);
-
-            if (from >= to) {
-                from = 0.0;
-            }
-
-            commandsMutex.lock();
-            sandbox.recordSecs(from, to, fps);
-            commandsMutex.unlock();
-
-            std::cout << "// " << std::endl;
-
-            int pct = 0;
-            while (pct < 100) {
-                // Delete previous line
-                const std::string deleteLine = "\e[2K\r\e[1A";
-                std::cout << deleteLine;
-
-                // Check progres.
-                commandsMutex.lock();
-                pct = sandbox.getRecordedPercentage();
-                commandsMutex.unlock();
-                
-                std::cout << "// [ ";
-                for (int i = 0; i < 50; i++) {
-                    if (i < pct/2) {
-                        std::cout << "#";
-                    }
-                    else {
-                        std::cout << ".";
-                    }
-                }
-                std::cout << " ] " << pct << "%" << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-            }
-            return true;
-        }
-        return false;
-    },
-    "", false));
-
-    commands.push_back(Command("secs", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() >= 3) {
-            int from = ada::toInt(values[1]);
-            int to = ada::toInt(values[2]);
-            float fps = 24.0;
-
-            if (values.size() == 4)
-                fps = ada::toFloat(values[3]);
-
-            if (from >= to) {
-                from = 0;
-            }
-
-            commandsMutex.lock();
-            sandbox.recordSecs(from, to, fps);
-            commandsMutex.unlock();
-
-            std::cout << "// " << std::endl;
-
-            int pct = 0;
-            while (pct < 100) {
-                // Delete previous line
-                const std::string deleteLine = "\e[2K\r\e[1A";
-                std::cout << deleteLine;
-
-                // Check progres.
-                commandsMutex.lock();
-                pct = sandbox.getRecordedPercentage();
-                commandsMutex.unlock();
-                
-                std::cout << "// [ ";
-                for (int i = 0; i < 50; i++) {
-                    if (i < pct/2) {
-                        std::cout << "#";
-                    }
-                    else {
-                        std::cout << ".";
-                    }
-                }
-                std::cout << " ] " << pct << "%" << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-            }
-            return true;
-        }
-        return false;
-    },
-    "secs,<A_sec>,<B_sec>[,fps] saves a sequence of images from A to B second.", false));
-
-    commands.push_back(Command("frames", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() >= 3) {
-            float from = ada::toFloat(values[1]);
-            float to = ada::toFloat(values[2]);
-            float fps = 24.0;
-
-            if (values.size() == 4)
-                fps = ada::toFloat(values[3]);
-
-            if (from >= to) {
-                from = 0.0;
-            }
-
-            commandsMutex.lock();
-            sandbox.recordFrames(from, to, fps);
-            commandsMutex.unlock();
-
-            std::cout << "// " << std::endl;
-
-            int pct = 0;
-            while (pct < 100) {
-                // Delete previous line
-                const std::string deleteLine = "\e[2K\r\e[1A";
-                std::cout << deleteLine;
-
-                // Check progres.
-                commandsMutex.lock();
-                pct = sandbox.getRecordedPercentage();
-                commandsMutex.unlock();
-                
-                std::cout << "// [ ";
-                for (int i = 0; i < 50; i++) {
-                    if (i < pct/2) {
-                        std::cout << "#";
-                    }
-                    else {
-                        std::cout << ".";
-                    }
-                }
-                std::cout << " ] " << pct << "%" << std::endl;
-                std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-            }
-            return true;
-        }
-        return false;
-    },
-    "frames,<A_sec>,<B_sec>[,fps] saves a sequence of images from frame A to B.", false));
-
-    commands.push_back(Command("q", [&](const std::string& _line){ 
+    sandbox.commands.push_back(Command("q", [&](const std::string& _line){ 
         if (_line == "q") {
             keepRunnig.store(false);
             return true;
@@ -1248,7 +816,7 @@ void commandsInit() {
     },
     "q                              close glslViewer", false));
 
-    commands.push_back(Command("quit", [&](const std::string& _line){ 
+    sandbox.commands.push_back(Command("quit", [&](const std::string& _line){ 
         if (_line == "quit") {
             bTerminate = true;
             // keepRunnig.store(false);
@@ -1258,7 +826,7 @@ void commandsInit() {
     },
     "quit                           close glslViewer", false));
 
-    commands.push_back(Command("exit", [&](const std::string& _line){ 
+    sandbox.commands.push_back(Command("exit", [&](const std::string& _line){ 
         if (_line == "exit") {
             bTerminate = true;
             // keepRunnig.store(false);
@@ -1339,15 +907,15 @@ void onExit() {
 void fileWatcherThread() {
     struct stat st;
     while ( keepRunnig.load() ) {
-        for ( uint32_t i = 0; i < files.size(); i++ ) {
+        for ( uint32_t i = 0; i < sandbox.files.size(); i++ ) {
             if ( fileChanged == -1 ) {
-                stat( files[i].path.c_str(), &st );
+                stat(  sandbox.files[i].path.c_str(), &st );
                 int date = st.st_mtime;
-                if ( date != files[i].lastChange ) {
-                    filesMutex.lock();
-                    files[i].lastChange = date;
+                if ( date !=  sandbox.files[i].lastChange ) {
+                    // filesMutex.lock();
+                     sandbox.files[i].lastChange = date;
                     fileChanged = i;
-                    filesMutex.unlock();
+                    // filesMutex.unlock();
                 }
             }
         }
@@ -1366,7 +934,7 @@ void cinWatcherThread() {
     // Argument commands to execute comming from -e or -E
     if (commandsArgs.size() > 0) {
         for (size_t i = 0; i < commandsArgs.size(); i++) {
-            commandsRun(commandsArgs[i], commandsMutex);
+            sandbox.commandsRun(commandsArgs[i]);
         }
         commandsArgs.clear();
 
@@ -1381,7 +949,7 @@ void cinWatcherThread() {
     std::string console_line;
     std::cout << "// > ";
     while (std::getline(std::cin, console_line)) {
-        commandsRun(console_line, commandsMutex);
+        sandbox.commandsRun(console_line);
         std::cout << "// > ";
     }
 }

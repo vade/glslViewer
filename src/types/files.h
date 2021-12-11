@@ -10,7 +10,9 @@ enum FileType {
     GEOMETRY        = 3,
     CUBEMAP         = 4,
     GLSL_DEPENDENCY = 5,
-    IMAGE_BUMPMAP   = 6
+    IMAGE_BUMPMAP   = 6,
+    VIDEO           = 7,
+    SEQUENCE_FOLDER = 8
 };
 
 struct WatchFile {

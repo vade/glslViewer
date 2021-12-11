@@ -5,6 +5,8 @@
 #include "thread_pool/thread_pool.hpp"
 #endif
 
+#include <mutex>
+
 #include "scene.h"
 #include "types/files.h"
 #include "ada/tools/list.h"
@@ -18,12 +20,15 @@ class Sandbox {
 public:
     Sandbox();
     virtual ~Sandbox();
-    
-    // Main stages
-    void                setup(WatchFileList &_files, CommandList &_commands);
+
+    bool                loadFile(const std::string& _filename);
+    void                init();
+
+    void                commandsRun(const std::string &_cmd);
+    void                commandsRun(const std::string &_cmd, std::mutex &_mutex);
 
     bool                setSource(ShaderType _type, const std::string& _source);
-    bool                reloadShaders(WatchFileList &_files);
+    bool                reloadShaders();
 
     void                flagChange();
     void                unflagChange(); 
@@ -50,16 +55,20 @@ public:
 
     void                printDependencies( ShaderType _type ) const;
 
-    
     // Some events
     void                onScroll( float _yoffset );
     void                onMouseDrag( float _x, float _y, int _button );
     void                onViewportResize( int _newWidth, int _newHeight );
-    void                onFileChange( WatchFileList &_files, int _index );
+    void                onFileChange( int _index );
     void                onScreenshot( std::string _file );
     void                onHistogram();
    
-    // Include folders
+    CommandList         commands;
+    std::mutex          commandsMutex;
+
+    // Files
+    WatchFileList       files;
+    std::mutex          filesMutex;
     ada::List           include_folders;
 
     // Uniforms
@@ -74,12 +83,18 @@ public:
     int                 geom_index;
 
     int                 holoplay;
+    int                 textureCounter;
     
     bool                verbose;
     bool                cursor;
     bool                fxaa;
+    bool                vFlip;
 
 private:
+
+    void                _initCommands();
+    void                _initUniforms();
+
     void                _updateSceneBuffer(int _width, int _height);
     void                _updateConvolutionPyramids();
     void                _updateBuffers();
