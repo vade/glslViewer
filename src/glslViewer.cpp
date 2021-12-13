@@ -1,4 +1,4 @@
-#include "sandbox.h"
+#include "glslViewer.h"
 
 #include <sys/stat.h>   // stat
 #include <algorithm>    // std::find
@@ -14,6 +14,9 @@
 
 #include "glm/gtx/matrix_transform_2d.hpp"
 #include "glm/gtx/rotate_vector.hpp"
+
+std::mutex commandsMutex;
+std::mutex filesMutex;
 
 // This are hardcoded values for the Portrait HoloPlay by LGF.
 //  in order to render correctly make sure this values match your calibration file on your device
@@ -33,9 +36,9 @@ int holoplay_rows = 8;
 int holoplay_totalViews = 32;
 
 // ------------------------------------------------------------------------- CONTRUCTOR
-Sandbox::Sandbox(): 
-    frag_index(-1), vert_index(-1), geom_index(-1), holoplay(-1), textureCounter(0),
-    verbose(false), cursor(true), fxaa(false), vFlip(true),
+GlslViewer::GlslViewer(): 
+    fileChanged(-1), frag_index(-1), vert_index(-1), geom_index(-1), holoplay(-1), textureCounter(0),
+    verbose(false), cursor(true), fxaa(false), vFlip(true), fullFps(false),
     // Main Vert/Frag/Geom
     m_frag_source(""), m_vert_source(""),
     // Buffers
@@ -69,7 +72,7 @@ Sandbox::Sandbox():
     _initCommands();
 }
 
-Sandbox::~Sandbox() {
+GlslViewer::~GlslViewer() {
     #ifdef SUPPORT_MULTITHREAD_RECORDING 
     /** make sure every frame is saved before exiting **/
     if (m_task_count > 0)
@@ -81,7 +84,7 @@ Sandbox::~Sandbox() {
     #endif
 }
 
-void Sandbox::_initCommands() {
+void GlslViewer::_initCommands() {
     commands.push_back(Command("help", [&](const std::string& _line){
         if (_line == "help") {
             for (size_t i = 0; i < commands.size(); i++) {
@@ -196,7 +199,7 @@ void Sandbox::_initCommands() {
         }
         return false;
     },
-    "", false));
+    "sequence,<A_sec>,<B_sec>[,fps] saves a sequence of images from A to B second.", false));
 
     commands.push_back(Command("secs", [&](const std::string& _line){ 
         std::vector<std::string> values = ada::split(_line,',');
@@ -298,7 +301,7 @@ void Sandbox::_initCommands() {
 
 
 
-    // Add Sandbox Commands
+    // Add GlslViewer Commands
     // ----------------------------------------
 
     commands.push_back(Command("debug", [&](const std::string& _line){
@@ -351,7 +354,107 @@ void Sandbox::_initCommands() {
     },
     "files                          return a list of files.", false));
 
-    
+    commands.push_back(Command("reload", [&](const std::string& _line){ 
+        if (_line == "reload" || _line == "reload,all") {
+            fullFps = true;
+            for (size_t i = 0; i < files.size(); i++) {
+                filesMutex.lock();
+                fileChanged = i;
+                filesMutex.unlock();
+                std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
+            }
+            fullFps = false;
+            return true;
+        }
+        else {
+            std::vector<std::string> values = ada::split(_line,',');
+            if (values.size() == 2 && values[0] == "reload") {
+                for (size_t i = 0; i < files.size(); i++) {
+                    if (files[i].path == values[1]) {
+                        filesMutex.lock();
+                        fileChanged = i;
+                        filesMutex.unlock();
+                        return true;
+                    } 
+                }
+            }
+        }
+        return false;
+    },
+    "reload[,<filename>]            reload one or all files", false));
+
+    commands.push_back( Command("define,", [&](const std::string& _line){ 
+        std::vector<std::string> values = ada::split(_line,',');
+        bool change = false;
+        if (values.size() == 2) {
+            std::vector<std::string> v = ada::split(values[1],' ');
+            if (v.size() > 1)
+                addDefine( v[0], v[1] );
+            else
+                addDefine( v[0] );
+            change = true;
+        }
+        else if (values.size() == 3) {
+            addDefine( values[1], values[2] );
+            change = true;
+        }
+
+        if (change) {
+            fullFps = true;
+            for (size_t i = 0; i < files.size(); i++) {
+                if (files[i].type == FRAG_SHADER ||
+                    files[i].type == VERT_SHADER ) {
+                        filesMutex.lock();
+                        fileChanged = i;
+                        filesMutex.unlock();
+                        std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
+                }
+            }
+            fullFps = false;
+        }
+        return change;
+    },
+    "define,<KEYWORD>               add a define to the shader", false));
+
+    commands.push_back( Command("undefine,", [&](const std::string& _line){ 
+        std::vector<std::string> values = ada::split(_line,',');
+        if (values.size() == 2) {
+            delDefine( values[1] );
+            fullFps = true;
+            for (size_t i = 0; i < files.size(); i++) {
+                if (files[i].type == FRAG_SHADER ||
+                    files[i].type == VERT_SHADER ) {
+                        filesMutex.lock();
+                        fileChanged = i;
+                        filesMutex.unlock();
+                        std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
+                }
+            }
+            fullFps = false;
+            return true;
+        }
+        return false;
+    },
+    "undefine,<KEYWORD>             remove a define on the shader", false));
+
+    commands.push_back(Command("fullFps", [&](const std::string& _line){
+        if (_line == "fullFps") {
+            std::string rta = fullFps ? "on" : "off";
+            std::cout <<  rta << std::endl; 
+            return true;
+        }
+        else {
+            std::vector<std::string> values = ada::split(_line,',');
+            if (values.size() == 2) {
+                // commandsMutex.lock();
+                fullFps = (values[1] == "on");
+                // commandsMutex.unlock();
+            }
+        }
+        return false;
+    },
+    "fullFps[,on|off]               go to full FPS or not", false));
+
     commands.push_back(Command("frag", [&](const std::string& _line){ 
         if (_line == "frag") {
             std::cout << getSource(FRAGMENT) << std::endl;
@@ -792,7 +895,7 @@ void Sandbox::_initCommands() {
     #endif
 }
 
-void Sandbox::_initUniforms() {
+void GlslViewer::_initUniforms() {
 
     uniforms.functions["u_frame"] = UniformFunction( "int", [this](ada::Shader& _shader) {
         if (m_record_sec) _shader.setUniform("u_frame", (int)(m_record_sec_start / m_record_fdelta) + m_record_counter);
@@ -854,7 +957,7 @@ void Sandbox::_initUniforms() {
 
 // ------------------------------------------------------------------------- SET
 
-bool Sandbox::loadFile(const std::string& _filename) {
+bool GlslViewer::loadFile(const std::string& _filename) {
     bool rta = false;
     struct stat st;
     WatchFile file;
@@ -930,7 +1033,7 @@ bool Sandbox::loadFile(const std::string& _filename) {
     return rta;
 }
 
-void Sandbox::init() {
+void GlslViewer::init() {
     // LOAD SHACER 
     // -----------------------------------------------
     if (frag_index != -1) {
@@ -1081,8 +1184,34 @@ void Sandbox::init() {
     flagChange();
 }
 
-void Sandbox::commandsRun(const std::string &_cmd) { commandsRun(_cmd, commandsMutex); }
-void Sandbox::commandsRun(const std::string &_cmd, std::mutex &_mutex) {
+void GlslViewer::commandsRun(const std::string &_cmd) { 
+    bool resolve = false;
+
+    // Check if _cmd is present in the list of commands
+    for (size_t i = 0; i < commands.size(); i++) {
+        if (ada::beginsWith(_cmd, commands[i].begins_with)) {
+            // Do require mutex the thread?
+            if (commands[i].mutex) commandsMutex.lock();
+
+            // Execute de command
+            resolve = commands[i].exec(_cmd);
+
+            if (commands[i].mutex) commandsMutex.unlock();
+
+            // If got resolved stop searching
+            if (resolve) break;
+        }
+    }
+
+    // If nothing match maybe the user is trying to define the content of a uniform
+    if (!resolve) {
+        commandsMutex.lock();
+        uniforms.parseLine(_cmd);
+        commandsMutex.unlock();
+    }
+
+}
+void GlslViewer::commandsRun(const std::string &_cmd, std::mutex &_mutex) {
     bool resolve = false;
 
     // Check if _cmd is present in the list of commands
@@ -1109,7 +1238,7 @@ void Sandbox::commandsRun(const std::string &_cmd, std::mutex &_mutex) {
     }
 }
 
-void Sandbox::addDefine(const std::string &_define, const std::string &_value) {
+void GlslViewer::addDefine(const std::string &_define, const std::string &_value) {
     for (int i = 0; i < m_buffers_total; i++)
         m_buffers_shaders[i].addDefine(_define, _value);
 
@@ -1121,7 +1250,7 @@ void Sandbox::addDefine(const std::string &_define, const std::string &_value) {
     m_postprocessing_shader.addDefine(_define, _value);
 }
 
-void Sandbox::delDefine(const std::string &_define) {
+void GlslViewer::delDefine(const std::string &_define) {
     for (int i = 0; i < m_buffers_total; i++)
         m_buffers_shaders[i].delDefine(_define);
 
@@ -1135,21 +1264,21 @@ void Sandbox::delDefine(const std::string &_define) {
 
 // ------------------------------------------------------------------------- GET
 
-bool Sandbox::isReady() {
+bool GlslViewer::isReady() {
     return m_initialized;
 }
 
-void Sandbox::flagChange() { 
+void GlslViewer::flagChange() { 
     m_change = true;
 }
 
-void Sandbox::unflagChange() {
+void GlslViewer::unflagChange() {
     m_change = false;
     m_scene.unflagChange();
     uniforms.unflagChange();
 }
 
-bool Sandbox::haveChange() { 
+bool GlslViewer::haveChange() { 
 
     // std::cout << "CHANGE " << m_change << std::endl;
     // std::cout << "RECORD " << m_record << std::endl;
@@ -1164,11 +1293,11 @@ bool Sandbox::haveChange() {
             uniforms.haveChange();
 }
 
-const std::string& Sandbox::getSource(ShaderType _type) const {
+const std::string& GlslViewer::getSource(ShaderType _type) const {
     return (_type == FRAGMENT)? m_frag_source : m_vert_source;
 }
 
-int Sandbox::getRecordedPercentage() {
+int GlslViewer::getRecordedPercentage() {
     if (m_record_sec)
         return ((m_record_sec_head - m_record_sec_start) / (m_record_sec_end - m_record_sec_start)) * 100;
     else if (m_record_frame)
@@ -1179,7 +1308,7 @@ int Sandbox::getRecordedPercentage() {
 
 // ------------------------------------------------------------------------- RELOAD SHADER
 
-void Sandbox::_updateSceneBuffer(int _width, int _height) {
+void GlslViewer::_updateSceneBuffer(int _width, int _height) {
     ada::FboType type = uniforms.functions["u_sceneDepth"].present ? ada::COLOR_DEPTH_TEXTURES : ada::COLOR_TEXTURE_DEPTH_BUFFER;
 
     if (holoplay >= 0) {
@@ -1194,14 +1323,14 @@ void Sandbox::_updateSceneBuffer(int _width, int _height) {
         m_scene_fbo.allocate(_width, _height, type);
 }
 
-bool Sandbox::setSource(ShaderType _type, const std::string& _source) {
+bool GlslViewer::setSource(ShaderType _type, const std::string& _source) {
     if (_type == FRAGMENT) m_frag_source = _source;
     else  m_vert_source = _source;
 
     return true;
 };
 
-bool Sandbox::reloadShaders() {
+bool GlslViewer::reloadShaders() {
     flagChange();
 
     // UPDATE scene shaders of models (materials)
@@ -1290,7 +1419,7 @@ bool Sandbox::reloadShaders() {
 }
 
 // ------------------------------------------------------------------------- UPDATE
-void Sandbox::_updateBuffers() {
+void GlslViewer::_updateBuffers() {
     if ( m_buffers_total != int(uniforms.buffers.size()) ) {
 
         if (verbose)
@@ -1323,7 +1452,7 @@ void Sandbox::_updateBuffers() {
     }
 }
 
-void Sandbox::_updateConvolutionPyramids() {
+void GlslViewer::_updateConvolutionPyramids() {
     if ( m_convolution_pyramid_total != int(uniforms.convolution_pyramids.size()) ) {
 
         if (verbose)
@@ -1377,71 +1506,35 @@ void Sandbox::_updateConvolutionPyramids() {
 }
 
 // ------------------------------------------------------------------------- DRAW
-void Sandbox::_renderBuffers() {
-    glDisable(GL_BLEND);
 
-    bool reset_viewport = false;
-    for (unsigned int i = 0; i < uniforms.buffers.size(); i++) {
-        reset_viewport += uniforms.buffers[i].fixed;
+void GlslViewer::render() {
+    ada::updateGL();
 
-        uniforms.buffers[i].bind();
+    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
-        m_buffers_shaders[i].use();
+    // // Did a file change change??
+    // if ( fileChanged != -1 )
+    //     _onFileChange();
 
-        // Pass textures for the other buffers
-        for (unsigned int j = 0; j < uniforms.buffers.size(); j++)
-            if (i != j)
-                m_buffers_shaders[i].setUniformTexture("u_buffer" + ada::toString(j), &uniforms.buffers[j] );
+    // if (!fullFps && !haveChange()) {
+    //     // If nothing in the scene change skip the frame and try to keep it at 60fps
+    //     std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
+    //     return;
+    // }
 
-        // Update uniforms and textures
-        uniforms.feedTo( m_buffers_shaders[i], true, false);
+    // Draw Scene
+    _renderScene();
 
-        m_billboard_vbo->render( &m_buffers_shaders[i] );
-        
-        uniforms.buffers[i].unbind();
-    }
+    // Draw Cursor and 2D Debug elements
+    _renderUI();
 
-    #if defined(__EMSCRIPTEN__)
-    if (ada::getWebGLVersionNumber() == 1)
-        reset_viewport = true;
-    #endif
+    // Finish drawing
+    _renderDone();
 
-    if (reset_viewport)
-        glViewport(0.0f, 0.0f, ada::getViewport().z, ada::getViewport().w);
-    
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    ada::renderGL();
 }
 
-void Sandbox::_renderConvolutionPyramids() {
-    // 
-    // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA);
-    // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-    for (unsigned int i = 0; i < m_convolution_pyramid_subshaders.size(); i++) {
-        glDisable(GL_BLEND);
-
-        m_convolution_pyramid_fbos[i].bind();
-        m_convolution_pyramid_subshaders[i].use();
-
-        // Clear the background
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        // Update uniforms and textures
-        uniforms.feedTo( m_convolution_pyramid_subshaders[i] );
-        m_billboard_vbo->render( &m_convolution_pyramid_subshaders[i] );
-
-        m_convolution_pyramid_fbos[i].unbind();
-
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-        uniforms.convolution_pyramids[i].process(&m_convolution_pyramid_fbos[i]);
-    }
-
-}
-
-void Sandbox::render() {
+void GlslViewer::_renderScene() {
 
     // UPDATE STREAMING TEXTURES
     // -----------------------------------------------
@@ -1650,8 +1743,73 @@ void Sandbox::render() {
     }
 }
 
+void GlslViewer::_renderBuffers() {
+    glDisable(GL_BLEND);
 
-void Sandbox::renderUI() {
+    bool reset_viewport = false;
+    for (unsigned int i = 0; i < uniforms.buffers.size(); i++) {
+        reset_viewport += uniforms.buffers[i].fixed;
+
+        uniforms.buffers[i].bind();
+
+        m_buffers_shaders[i].use();
+
+        // Pass textures for the other buffers
+        for (unsigned int j = 0; j < uniforms.buffers.size(); j++)
+            if (i != j)
+                m_buffers_shaders[i].setUniformTexture("u_buffer" + ada::toString(j), &uniforms.buffers[j] );
+
+        // Update uniforms and textures
+        uniforms.feedTo( m_buffers_shaders[i], true, false);
+
+        m_billboard_vbo->render( &m_buffers_shaders[i] );
+        
+        uniforms.buffers[i].unbind();
+    }
+
+    #if defined(__EMSCRIPTEN__)
+    if (ada::getWebGLVersionNumber() == 1)
+        reset_viewport = true;
+    #endif
+
+    if (reset_viewport)
+        glViewport(0.0f, 0.0f, ada::getViewport().z, ada::getViewport().w);
+    
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
+
+void GlslViewer::_renderConvolutionPyramids() {
+    // 
+    // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_DST_ALPHA);
+    // glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+    for (unsigned int i = 0; i < m_convolution_pyramid_subshaders.size(); i++) {
+        glDisable(GL_BLEND);
+
+        m_convolution_pyramid_fbos[i].bind();
+        m_convolution_pyramid_subshaders[i].use();
+
+        // Clear the background
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // Update uniforms and textures
+        uniforms.feedTo( m_convolution_pyramid_subshaders[i] );
+        m_billboard_vbo->render( &m_convolution_pyramid_subshaders[i] );
+
+        m_convolution_pyramid_fbos[i].unbind();
+
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        uniforms.convolution_pyramids[i].process(&m_convolution_pyramid_fbos[i]);
+    }
+
+}
+
+
+
+void GlslViewer::_renderUI() {
     // IN PUT TEXTURES
     if (m_showTextures) {        
         glDisable(GL_DEPTH_TEST);
@@ -1831,7 +1989,7 @@ void Sandbox::renderUI() {
     }
 }
 
-void Sandbox::renderDone() {
+void GlslViewer::_renderDone() {
     // RECORD
     if (m_record_sec || m_record_frame) {
         onScreenshot( ada::toString(m_record_counter, 0, 5, '0') + ".png");
@@ -1872,7 +2030,7 @@ void Sandbox::renderDone() {
 
 // ------------------------------------------------------------------------- ACTIONS
 
-void Sandbox::clear() {
+void GlslViewer::clear() {
     uniforms.clear();
 
     if (geom_index != -1)
@@ -1885,7 +2043,7 @@ void Sandbox::clear() {
         delete m_cross_vbo;
 }
 
-void Sandbox::recordSecs(float _start, float _end, float fps) {
+void GlslViewer::recordSecs(float _start, float _end, float fps) {
     m_record_fdelta = 1.0/fps;
     m_record_counter = 0;
 
@@ -1895,7 +2053,7 @@ void Sandbox::recordSecs(float _start, float _end, float fps) {
     m_record_sec = true;
 }
 
-void Sandbox::recordFrames(int _start, int _end, float fps) {
+void GlslViewer::recordFrames(int _start, int _end, float fps) {
     m_record_fdelta = 1.0/fps;
     m_record_counter = 0;
 
@@ -1905,7 +2063,7 @@ void Sandbox::recordFrames(int _start, int _end, float fps) {
     m_record_frame = true;
 }
 
-void Sandbox::printDependencies(ShaderType _type) const {
+void GlslViewer::printDependencies(ShaderType _type) const {
     if (_type == FRAGMENT) {
         for (unsigned int i = 0; i < m_frag_dependencies.size(); i++) {
             std::cout << m_frag_dependencies[i] << std::endl;
@@ -1920,11 +2078,15 @@ void Sandbox::printDependencies(ShaderType _type) const {
 
 // ------------------------------------------------------------------------- EVENTS
 
-void Sandbox::onFileChange(int index) {
-    FileType type = files[index].type;
-    std::string filename = files[index].path;
+void GlslViewer::_onFileChange() {
+    if ( fileChanged < 0 || fileChanged >= files.size() )
+        return;
+
+    size_t index = fileChanged;
 
     filesMutex.lock();
+    FileType type = files[index].type;
+    std::string filename = files[index].path;
 
     // IF the change is on a dependency file, re route to the correct shader that need to be reload
     if (type == GLSL_DEPENDENCY) {
@@ -1969,10 +2131,11 @@ void Sandbox::onFileChange(int index) {
 
     flagChange();
 
+    fileChanged = -1;
     filesMutex.unlock();
 }
 
-void Sandbox::onScroll(float _yoffset) {
+void GlslViewer::onScroll(float _yoffset) {
     // Vertical scroll button zooms u_view2d and view3d.
     /* zoomfactor 2^(1/4): 4 scroll wheel clicks to double in size. */
     constexpr float zoomfactor = 1.1892;
@@ -1990,7 +2153,7 @@ void Sandbox::onScroll(float _yoffset) {
     }
 }
 
-void Sandbox::onMouseDrag(float _x, float _y, int _button) {
+void GlslViewer::onMouseDrag(float _x, float _y, int _button) {
     float x = _x;
     float y = _y;
 
@@ -2030,7 +2193,7 @@ void Sandbox::onMouseDrag(float _x, float _y, int _button) {
     }
 }
 
-void Sandbox::onViewportResize(int _newWidth, int _newHeight) {
+void GlslViewer::onViewportResize(int _newWidth, int _newHeight) {
     uniforms.getCamera().setViewport(_newWidth, _newHeight);
     
     for (unsigned int i = 0; i < uniforms.buffers.size(); i++) 
@@ -2053,7 +2216,7 @@ void Sandbox::onViewportResize(int _newWidth, int _newHeight) {
     flagChange();
 }
 
-void Sandbox::onScreenshot(std::string _file) {
+void GlslViewer::onScreenshot(std::string _file) {
 
     if (_file != "" && ada::isGL()) {
         glBindFramebuffer(GL_FRAMEBUFFER, m_record_fbo.getId());
@@ -2147,7 +2310,7 @@ void Sandbox::onScreenshot(std::string _file) {
 }
 
 
-void Sandbox::onHistogram() {
+void GlslViewer::onHistogram() {
     if ( ada::isGL() && haveChange() ) {
 
         // Extract pixels

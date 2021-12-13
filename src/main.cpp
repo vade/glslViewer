@@ -24,42 +24,33 @@
 #include "ada/tools/text.h"
 #include "ada/shaders/defaultShaders.h"
 
-#include "sandbox.h"
-#include "types/files.h"
+#include "glslViewer.h"
 
 std::string                 version = "2.0.2";
 std::string                 name    = "GlslViewer";
 std::string                 header  = name + " " + version + " by Patricio Gonzalez Vivo ( patriciogonzalezvivo.com )"; 
 
 // Here is where all the magic happens
-Sandbox                     sandbox;
+GlslViewer                  sandbox;
 
 //  List of FILES to watch and the variable to communicate that between process
 int                         fileChanged;
 
 // Commands variables
-std::vector<std::string>    commandsArgs;    // Execute commands
+std::vector<std::string>    commandsQueue;    // Execute commands
 bool                        commandsExit = false;
 
 std::atomic<bool>           keepRunnig(true);
 bool                        screensaver = false;
 bool                        bTerminate = false;
-bool                        fullFps = false;
 
 void                        commandsInit();
 
-#if !defined(__EMSCRIPTEN__)
-void                        printUsage(char * executableName);
-void                        fileWatcherThread();
-void                        cinWatcherThread();
-void                        onExit();
-
-#else
-
+#if defined(__EMSCRIPTEN__)
 extern "C"  {
     
 void command(char* c) {
-    commandsArgs.push_back( std::string(c) );
+    commandsQueue.push_back( std::string(c) );
 }
 
 void setFrag(char* c) {
@@ -82,7 +73,15 @@ char* getVert() {
 
 }
 
-#endif
+EM_BOOL loop (double time, void* userData) {
+    if (sandbox.isReady() && commandsQueue.size() > 0) {
+        for (size_t i = 0; i < commandsQueue.size(); i++) {
+            commandsRun(commandsQueue[i]);
+        }
+        commandsQueue.clear();
+    }
+
+#else
 
 // Open Sound Control
 #if defined(SUPPORT_OSC)
@@ -91,49 +90,23 @@ std::mutex                  oscMutex;
 int                         oscPort = 0;
 #endif
 
-#if defined(__EMSCRIPTEN__)
-EM_BOOL loop (double time, void* userData) {
-#else
+void                        printUsage(char * executableName);
+void                        fileWatcherThread();
+void                        cinWatcherThread();
+void                        onExit();
+
 void loop() {
-#endif
-    ada::updateGL();
-
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-
-    #ifndef __EMSCRIPTEN__
-    if (!bTerminate && !fullFps && !sandbox.haveChange()) {
-    // If nothing in the scene change skip the frame and try to keep it at 60fps
-        std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
+    if (!bTerminate)
         return;
-    }
-    #else
+#endif
 
-    if (sandbox.isReady() && commandsArgs.size() > 0) {
-        for (size_t i = 0; i < commandsArgs.size(); i++) {
-            commandsRun(commandsArgs[i]);
-        }
-        commandsArgs.clear();
-    }
-
-    #endif
-
-    // Draw Scene
     sandbox.render();
 
-    // Draw Cursor and 2D Debug elements
-    sandbox.renderUI();
-
-    // Finish drawing
-    sandbox.renderDone();
-
-#ifndef __EMSCRIPTEN__
+    #ifndef __EMSCRIPTEN__
     if ( bTerminate && sandbox.screenshotFile == "" )
         keepRunnig.store(false);
-    else
-#endif
-        ada::renderGL();
 
-    #if defined(__EMSCRIPTEN__)
+    #else
     return true;
     #endif
 }
@@ -331,20 +304,20 @@ int main(int argc, char **argv) {
         #endif
         else if ( argument == "-e" ) {
             if(++i < argc)         
-                commandsArgs.push_back(std::string(argv[i]));
+                commandsQueue.push_back(std::string(argv[i]));
             else
                 std::cout << "Argument '" << argument << "' should be followed by a <command>. Skipping argument." << std::endl;
         }
         else if ( argument == "-E" ) {
             if(++i < argc) {
-                commandsArgs.push_back(std::string(argv[i]));
+                commandsQueue.push_back(std::string(argv[i]));
                 commandsExit = true;
             }
             else
                 std::cout << "Argument '" << argument << "' should be followed by a <command>. Skipping argument." << std::endl;
         }
         else if (argument == "--fullFps" ) {
-            fullFps = true;
+            sandbox.fullFps = true;
         }
         else if (   argument == "-vFlip" ||
                     argument == "--vFlip" ) {
@@ -400,7 +373,7 @@ int main(int argc, char **argv) {
             // variations of meshes, that only get created after loading the sece
             // to work around that defines are add post-loading as argument commands
             std::string define = std::string("define,") + argument.substr(2);
-            commandsArgs.push_back(define);
+            commandsQueue.push_back(define);
         }
         else if ( argument.find("-I") == 0 ) {
             std::string include = argument.substr(2);
@@ -534,23 +507,16 @@ int main(int argc, char **argv) {
         sandbox.commandsRun(line, oscMutex);
     });
 
-    if (oscPort > 0) {
+    if (oscPort > 0)
         oscServer.start();
-    }
+    
     #endif
     
     // Render Loop
-    while ( ada::isGL() && keepRunnig.load() ){
-        // Something change??
-        if ( fileChanged != -1 ) {
-            sandbox.onFileChange( fileChanged );
-            fileChanged = -1;
-        }
-
+    while ( ada::isGL() && keepRunnig.load() )
         loop();
-    }
 
-    
+
     // If is terminated by the windows manager, turn keepRunnig off so the fileWatcher can stop
     if ( !ada::isGL() )
         keepRunnig.store(false);
@@ -601,89 +567,6 @@ void ada::onMouseDrag(float _x, float _y, int _button) { sandbox.onMouseDrag(_x,
 void ada::onViewportResize(int _newWidth, int _newHeight) { sandbox.onViewportResize(_newWidth, _newHeight); }
 
 void commandsInit() {
-
-    sandbox.commands.push_back( Command("define,", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        bool change = false;
-        if (values.size() == 2) {
-            std::vector<std::string> v = ada::split(values[1],' ');
-            if (v.size() > 1)
-                sandbox.addDefine( v[0], v[1] );
-            else
-                sandbox.addDefine( v[0] );
-            change = true;
-        }
-        else if (values.size() == 3) {
-            sandbox.addDefine( values[1], values[2] );
-            change = true;
-        }
-
-        if (change) {
-            fullFps = true;
-            for (size_t i = 0; i < sandbox.files.size(); i++) {
-                if (sandbox.files[i].type == FRAG_SHADER ||
-                    sandbox.files[i].type == VERT_SHADER ) {
-                        sandbox.filesMutex.lock();
-                        fileChanged = i;
-                        sandbox.filesMutex.unlock();
-                        std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-                }
-            }
-            fullFps = false;
-        }
-        return change;
-    },
-    "define,<KEYWORD>               add a define to the shader", false));
-
-    sandbox.commands.push_back( Command("undefine,", [&](const std::string& _line){ 
-        std::vector<std::string> values = ada::split(_line,',');
-        if (values.size() == 2) {
-            sandbox.delDefine( values[1] );
-            fullFps = true;
-            for (size_t i = 0; i < sandbox.files.size(); i++) {
-                if (sandbox.files[i].type == FRAG_SHADER ||
-                    sandbox.files[i].type == VERT_SHADER ) {
-                        sandbox.filesMutex.lock();
-                        fileChanged = i;
-                        sandbox.filesMutex.unlock();
-                        std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-                }
-            }
-            fullFps = false;
-            return true;
-        }
-        return false;
-    },
-    "undefine,<KEYWORD>             remove a define on the shader", false));
-
-    sandbox.commands.push_back(Command("reload", [&](const std::string& _line){ 
-        if (_line == "reload" || _line == "reload,all") {
-            fullFps = true;
-            for (size_t i = 0; i < sandbox.files.size(); i++) {
-                sandbox.filesMutex.lock();
-                fileChanged = i;
-                sandbox.filesMutex.unlock();
-                std::this_thread::sleep_for(std::chrono::milliseconds( ada::getRestMs() ));
-            }
-            fullFps = false;
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2 && values[0] == "reload") {
-                for (size_t i = 0; i < sandbox.files.size(); i++) {
-                    if (sandbox.files[i].path == values[1]) {
-                        sandbox.filesMutex.lock();
-                        fileChanged = i;
-                        sandbox.filesMutex.unlock();
-                        return true;
-                    } 
-                }
-            }
-        }
-        return false;
-    },
-    "reload[,<filename>]            reload one or all files", false));
 
     sandbox.commands.push_back(Command("version", [&](const std::string& _line){ 
         if (_line == "version") {
@@ -789,24 +672,6 @@ void commandsInit() {
     },
     "date                           return u_date as YYYY, M, D and Secs.", false));
 
-    sandbox.commands.push_back(Command("fullFps", [&](const std::string& _line){
-        if (_line == "fullFps") {
-            std::string rta = fullFps ? "on" : "off";
-            std::cout <<  rta << std::endl; 
-            return true;
-        }
-        else {
-            std::vector<std::string> values = ada::split(_line,',');
-            if (values.size() == 2) {
-                // sandbox.commandsMutex.lock();
-                fullFps = (values[1] == "on");
-                // sandbox.commandsMutex.unlock();
-            }
-        }
-        return false;
-    },
-    "fullFps[,on|off]               go to full FPS or not", false));
-
     sandbox.commands.push_back(Command("q", [&](const std::string& _line){ 
         if (_line == "q") {
             keepRunnig.store(false);
@@ -908,13 +773,13 @@ void fileWatcherThread() {
     struct stat st;
     while ( keepRunnig.load() ) {
         for ( uint32_t i = 0; i < sandbox.files.size(); i++ ) {
-            if ( fileChanged == -1 ) {
+            if ( sandbox.fileChanged == -1 ) {
                 stat(  sandbox.files[i].path.c_str(), &st );
                 int date = st.st_mtime;
                 if ( date !=  sandbox.files[i].lastChange ) {
                     // filesMutex.lock();
-                     sandbox.files[i].lastChange = date;
-                    fileChanged = i;
+                    sandbox.files[i].lastChange = date;
+                    sandbox.fileChanged = i;
                     // filesMutex.unlock();
                 }
             }
@@ -932,11 +797,11 @@ void cinWatcherThread() {
     }
 
     // Argument commands to execute comming from -e or -E
-    if (commandsArgs.size() > 0) {
-        for (size_t i = 0; i < commandsArgs.size(); i++) {
-            sandbox.commandsRun(commandsArgs[i]);
+    if (commandsQueue.size() > 0) {
+        for (size_t i = 0; i < commandsQueue.size(); i++) {
+            sandbox.commandsRun(commandsQueue[i]);
         }
-        commandsArgs.clear();
+        commandsQueue.clear();
 
         // If it's using -E exit after executing all commands
         if (commandsExit) {

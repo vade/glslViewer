@@ -16,27 +16,25 @@ enum ShaderType {
     VERTEX = 1
 };
 
-class Sandbox {
+class GlslViewer {
 public:
-    Sandbox();
-    virtual ~Sandbox();
-
-    bool                loadFile(const std::string& _filename);
-    void                init();
+    GlslViewer();
+    virtual ~GlslViewer();
 
     void                commandsRun(const std::string &_cmd);
     void                commandsRun(const std::string &_cmd, std::mutex &_mutex);
 
+    bool                loadFile(const std::string& _filename);
     bool                setSource(ShaderType _type, const std::string& _source);
     bool                reloadShaders();
+
+    void                init();
 
     void                flagChange();
     void                unflagChange(); 
     bool                haveChange();
 
     void                render();
-    void                renderUI();
-    void                renderDone();
 
     void                clear();
     
@@ -59,16 +57,15 @@ public:
     void                onScroll( float _yoffset );
     void                onMouseDrag( float _x, float _y, int _button );
     void                onViewportResize( int _newWidth, int _newHeight );
-    void                onFileChange( int _index );
     void                onScreenshot( std::string _file );
     void                onHistogram();
    
+    // Commands    
     CommandList         commands;
-    std::mutex          commandsMutex;
-
+    
     // Files
     WatchFileList       files;
-    std::mutex          filesMutex;
+    int                 fileChanged;
     ada::List           include_folders;
 
     // Uniforms
@@ -89,6 +86,7 @@ public:
     bool                cursor;
     bool                fxaa;
     bool                vFlip;
+    bool                fullFps;
 
 private:
 
@@ -98,9 +96,16 @@ private:
     void                _updateSceneBuffer(int _width, int _height);
     void                _updateConvolutionPyramids();
     void                _updateBuffers();
+
+    void                _renderScene();
+    void                _renderUI();
+    void                _renderDone();
+    
     void                _renderConvolutionPyramids();
     void                _renderBuffers();
 
+    void                _onFileChange();
+    
     // Main Shader
     std::string         m_frag_source;
     std::string         m_vert_source;

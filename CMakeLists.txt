@@ -6,8 +6,8 @@ set(VERSION_PATCH 0)
 set(VERSION "${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_PATCH}")
 
 project(glslViewer 
-            VERSION ${VERSION}
-            LANGUAGES CXX )
+        VERSION ${VERSION}
+        LANGUAGES CXX )
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +24,7 @@ if (NO_X11 OR FORCE_GBM)
     add_compile_options(-std=c++14 -DGLM_FORCE_CXX14 -fpermissive -Wno-psabi -lpthread)
 endif()
 
+set(INCLUDE_FOLDER "${PROJECT_SOURCE_DIR}/src")
 file(GLOB ROOT_SOURCE 
     "${PROJECT_SOURCE_DIR}/src/*.cpp"
     "${PROJECT_SOURCE_DIR}/src/gl/*.cpp"
@@ -32,11 +33,6 @@ file(GLOB ROOT_SOURCE
 )
 
 add_executable(glslViewer ${ROOT_SOURCE})
-
-# set_target_properties(glslViewer PROPERTIES
-#     CXX_STANDARD 11
-#     CXX_STANDARD_REQUIRED ON
-# )
 
 include_directories(deps/liblo)
 target_include_directories(glslViewer PRIVATE deps)
@@ -117,6 +113,7 @@ else()
     set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE")
     set(CPACK_RESOURCE_FILE_README "${PROJECT_SOURCE_DIR}/README.md")
     set(CPACK_PACKAGE_ICON "${PROJECT_SOURCE_DIR}/assets/glslViewer.png")
+    set(INCLUDE_SWIG_FILE "${PROJECT_SOURCE_DIR}/${PROJECT_NAME}.i")
 
     # resolve architecture. The reason i "change" i686 to i386 is that debian packages
     # require i386 so this is for the future
