@@ -1,6 +1,6 @@
 [submodule "deps/ada"]
 	path = deps/ada
-	url = https://github.com/patriciogonzalezvivo/ada.git
+url=https://github.com/vade/ada.git
 	
 [submodule "deps/miniaudio"]
 	path = deps/miniaudio
