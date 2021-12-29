@@ -860,7 +860,7 @@ void Sandbox::_updateBuffers() {
 
             glm::vec2 size = glm::vec2(ada::getWindowWidth(), ada::getWindowHeight());
             uniforms.buffers[i].fixed = ada::get_buffer_size(m_frag_source, i, size);
-            uniforms.buffers[i].allocate(size.x, size.y, ada::COLOR_FLOAT_TEXTURE);
+            uniforms.buffers[i].allocate(size.x, size.y, ada::COLOR_TEXTURE, ada::LINEAR. ada::REPEAT, false);
             
             // New Shader
             m_buffers_shaders.push_back( ada::Shader() );
